@@ -2,11 +2,11 @@
 
 "use client"; 
 
-import React, { useState, useEffect } from 'react'; // --- REFACTOR: Import useEffect
+import React, { useState, useEffect } from 'react'; 
+import Image from 'next/image'; // IMPORTANT: You need Image import if you use <Image> component
 import { AnalyzeResponse, FormatInfo } from './types'; 
 import { sanitizeFilename } from './utils';
 import AdDisplay from './components/AdDisplay'; 
-// --- REFACTOR: REMOVED useAdContext ---
 
 
 // --- (Spinner and ErrorMessage components are unchanged) ---
@@ -19,72 +19,55 @@ const UnlockProModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   onUnlock: () => void;
-  // --- REFACTOR: Pass in your NEW 300x250 Ad Slot ID ---
   adSlotId: string;
 }> = ({ isOpen, onClose, onUnlock, adSlotId }) => {
   
-  // This is the "intelligence" for the timer
-  const [countdown, setCountdown] = useState(15); // 15 second timer
-  const [isAdLoaded, setIsAdLoaded] = useState(false); // To track if ad has loaded
+  const [countdown, setCountdown] = useState(15); 
+  const [isAdLoaded, setIsAdLoaded] = useState(false); 
 
   useEffect(() => {
-    // This effect runs when the modal is opened
     if (isOpen) {
-      // 1. Reset the timer (deferred to avoid calling setState synchronously in the effect)
-      const resetTimer = setTimeout(() => {
+      const initTimer = setTimeout(() => {
         setCountdown(15);
       }, 0);
-      
-      // 2. Start the countdown interval
+
       const interval = setInterval(() => {
         setCountdown((prev) => {
           if (prev <= 1) {
-            clearInterval(interval); // Stop timer at 0
+            clearInterval(interval);
             return 0;
           }
-          return prev - 1; // Decrement
+          return prev - 1;
         });
       }, 1000);
 
-      // 3. This is a failsafe. We *also* wait for the AdSense script
-      // to load and tell us it's ready. This is a bit of a hack,
-      // but it's a good UX fallback.
-      // We'll just use a simple timeout to simulate the ad loading.
       const adLoadTimer = setTimeout(() => {
         setIsAdLoaded(true);
-      }, 2000); // Assume ad is visible after 2s
+      }, 2000);
 
-      // 4. Cleanup function: clear intervals when modal is closed
       return () => {
-        clearTimeout(resetTimer);
+        clearTimeout(initTimer);
         clearInterval(interval);
         clearTimeout(adLoadTimer);
         setIsAdLoaded(false);
       };
     }
-  }, [isOpen]); // Only re-run when 'isOpen' changes
+  }, [isOpen]); 
 
   if (!isOpen) return null;
 
   const isUnlockable = (countdown === 0) && isAdLoaded;
 
   return (
-    // Backdrop
     <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      {/* Modal Card */}
       <div className="bg-gradient-to-br from-purple-900 to-indigo-900 p-8 rounded-3xl shadow-2xl border border-white/20 max-w-md w-full text-center">
         <h2 className="text-3xl font-black text-white mb-3">Unlock PRO Format</h2>
         <p className="text-white/80 mb-6">
           Please view this ad for 15 seconds to unlock your download.
         </p>
         
-        {/* --- REFACTOR: We use our existing AdDisplay component --- */}
         <div className="w-full flex justify-center my-4">
           <div className="w-[300px] min-h-[250px] bg-white/10 flex items-center justify-center">
-            {/* This component will automatically push the ad.
-              We "key" it with the adSlotId to force a re-render
-              if the slot ID ever changes.
-            */}
             <AdDisplay key={adSlotId} slot={adSlotId} format="rectangle" />
           </div>
         </div>
@@ -115,9 +98,6 @@ const UnlockProModal: React.FC<{
 // --- Main Page Component ---
 export default function Home() {
   
-  // --- REFACTOR: REMOVED ad context hooks ---
-  
-  // --- (Page state is unchanged) ---
   const [url, setUrl] = useState<string>(""); 
   const [loading, setLoading] = useState<boolean>(false); 
   const [error, setError] = useState<string | null>(null); 
@@ -125,14 +105,18 @@ export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState<FormatInfo | null>(null);
 
-  // --- (handleFetch is unchanged) ---
+  // --- REFACTOR: Define API_URL once at the component level for consistency ---
+  // This is the correct "top-class" way to access environment variables in Next.js
+  // for client-side code.
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
   const handleFetch = async (e: React.FormEvent) => {
     e.preventDefault(); 
     setLoading(true);
     setError(null);
     setResults(null);
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      // Use the API_URL defined above
       const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -145,7 +129,6 @@ export default function Home() {
       const data: AnalyzeResponse = await response.json();
       setResults(data);
     } catch (err: unknown) {
-      // Narrow `unknown` to known types before using
       if (err instanceof Error) {
         setError(err.message || "Failed to connect to the backend. Is it running?");
       } else if (typeof err === 'string') {
@@ -158,7 +141,6 @@ export default function Home() {
     }
   };
 
-  // --- (This is our "real" download function, unchanged) ---
   const _handleDownload = (format: FormatInfo) => {
     if (!results) return;
     
@@ -172,13 +154,12 @@ export default function Home() {
     const encodedExt = encodeURIComponent(ext);
     const encodedQuality = encodeURIComponent(quality);
 
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    // Use the API_URL defined above
     const downloadUrl = `${API_URL}/api/download?url=${encodedUrl}&format_id=${encodedFormatId}&title=${encodedTitle}&ext=${encodedExt}&quality=${encodedQuality}`;
 
     window.location.href = downloadUrl;
   };
 
-  // --- (Our unified click handler, unchanged) ---
   const handleFormatClick = (format: FormatInfo) => {
     if (format.is_premium) {
       setSelectedFormat(format);
@@ -188,7 +169,6 @@ export default function Home() {
     }
   };
 
-  // --- REFACTOR: This is now just a simple function ---
   const handleUnlockRequest = () => {
     if (selectedFormat) {
       _handleDownload(selectedFormat);
@@ -203,12 +183,17 @@ export default function Home() {
       <main className="container mx-auto px-4 py-8 md:py-12">
         <div className="max-w-6xl mx-auto">
           
-          {/* ... (Header, Form, Results, etc. are all unchanged) ... */}
           <div className="text-center mb-8 md:mb-12">
             <div className="flex items-center justify-center mb-4 md:mb-6 float-animation">
-              <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-3 md:p-4 rounded-2xl shadow-2xl">
-                <i className="fas fa-download text-white text-3xl md:text-5xl"></i>
-              </div>
+              {/* Corrected: Using Next.js Image component for the logo */}
+              <Image
+                src="/vydra-logo.png"
+                alt="Vydra Logo"
+                width={64}
+                height={64}
+                className="w-16 h-16 md:w-20 md:h-20"
+                priority
+              />
             </div>
             <h1 className="text-5xl md:text-7xl font-black text-white mb-3 md:mb-4 tracking-tight">Vydra</h1>
             <p className="text-xl md:text-3xl font-bold bg-gradient-to-r from-purple-300 via-pink-300 to-blue-300 bg-clip-text text-transparent mb-2 md:mb-3">Download everything, anywhere.</p>
@@ -264,8 +249,6 @@ export default function Home() {
                           <button
                             key={index}
                             onClick={() => handleFormatClick(format)}
-                            // We no longer disable the PRO button
-                            // disabled={format.is_premium} 
                             className={`
                               bg-white/10 backdrop-blur-sm border-2 border-white/30 rounded-xl p-4 
                               transition-all flex items-center justify-between gap-3 group
