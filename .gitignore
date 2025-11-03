@@ -1,0 +1,21 @@
+# vydra_frontend/.gitignore
+
+# Node.js dependencies
+# This is the most important one. This folder is huge.
+node_modules/
+
+# Next.js production build folder
+.next/
+
+# Next.js local environment variables
+# This is critical for security. It's where you'd put
+# secret keys that should NOT be on GitHub.
+.env.local
+
+# Log files
+npm-debug.log*
+yarn-error.log
+
+# OS / IDE specific
+.DS_Store
+.vscode/

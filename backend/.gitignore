@@ -1,0 +1,29 @@
+# vydra_backend_api/.gitignore
+
+# Python virtual environment
+# This is the most important one. Never commit your libraries.
+venv/
+.venv/
+env/
+.env/
+
+# Compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build/distribution artifacts
+/dist/
+/build/
+*.egg-info/
+*.egg
+
+# Sensitive configuration
+# We don't have one yet, but this is a standard, secure practice.
+.env
+
+# OS / IDE specific
+.DS_Store
+.idea/
+.vscode/

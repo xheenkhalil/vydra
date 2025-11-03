@@ -1,0 +1,7 @@
+# vydra/backend_api/requirements.txt
+
+fastapi
+uvicorn[standard]
+yt-dlp
+pydantic
+httpx
