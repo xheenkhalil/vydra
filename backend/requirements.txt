@@ -1,7 +1,8 @@
-# vydra/backend_api/requirements.txt
+# vydra_backend_api/requirements.txt
 
 fastapi
 uvicorn[standard]
 yt-dlp
 pydantic
 httpx
+gunicorn  # <--- THIS MUST BE HERE
