@@ -1,273 +1,223 @@
-# vydra/backend_api/main.py
-
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Response, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, HttpUrl
-import yt_dlp
-import logging
 import httpx
-from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import List, Optional
+from yt_dlp import YoutubeDL
+import os
 import re
 
-# --- Configuration & Setup ---
+app = FastAPI()
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="Vydra Downloader API",
-    description="A metadata-only API for Vydra PWA using yt-dlp.",
-    version="3.0.0" # Version bump!
-)
-
+# --- CORRECTED CORS Configuration ---
+# This is crucial for allowing your Vercel frontend to communicate with your Render backend.
+# The 'origins' list now includes your *exact* Vercel frontend URL.
 origins = [
     "http://localhost",
     "http://localhost:3000",
+    "https://vydra.onrender.com",           # Your backend's own URL (important for itself)
+    "https://vydra-downloader.vercel.app",  # Your *exact* Vercel frontend production URL
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=True,  # Important if you plan to use cookies/authorization headers
+    allow_methods=["*"],     # Allows all standard HTTP methods (GET, POST, PUT, DELETE, OPTIONS)
+    allow_headers=["*"],     # Allows all headers to be sent by the client
 )
 
-# --- REFACTOR: Pydantic Models ---
+# Pydantic models (AnalyzeRequest, AnalyzeResponse, FormatInfo, etc.)
+class AnalyzeRequest(BaseModel):
+    url: str
 
 class FormatInfo(BaseModel):
-    """
-    REFACTOR: This is our new, intelligent format model.
-    """
-    quality: str      # The pretty display name (e.g., "720p" or "Premium HD (1440p)")
-    ext: str          # The file extension (e.g., "mp4")
-    size_mb: float | None
-    is_premium: bool  # Is this a locked format?
-    format_id: str    # The *actual* ID yt-dlp uses (e.g., "303")
-    
+    format_id: str
+    ext: str
+    quality: str
+    size_mb: Optional[float] = None # Size in MB, optional
+    is_premium: bool = False # Added for 'premium' formats
+
 class AnalyzeResponse(BaseModel):
     title: str
-    thumbnail: str | None
-    formats: list[FormatInfo]
-    original_url: HttpUrl
+    thumbnail: Optional[str] = None
+    original_url: str
+    formats: List[FormatInfo]
 
-class AnalyzeRequest(BaseModel):
-    """
-    Minimal request model for /api/analyze.
-    """
-    url: HttpUrl
-
-# --- Helper Functions ---
-
-def sanitize_filename(name: str):
-    if not name: return "untitled"
-    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '', name)
-    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
-    if sanitized.lstrip().startswith('.'):
-        sanitized = "file" + sanitized
-    if not sanitized: return "download"
-    return sanitized[:200]
-
-# --- REFACTOR: New Format Filtering Logic ---
-def get_clean_formats(info: dict) -> list[FormatInfo]:
-    """
-    This is our new "intelligent" filter.
-    It loops through all formats and buckets them
-    into the free/premium tiers you specified.
-    """
-    cleaned_formats = []
-    seen_qualities = set() # To prevent duplicates (e.g., 720p webm and 720p mp4)
-
-    # Define our free tiers
-    # We use height for video, and extension for audio
-    FREE_VIDEO_HEIGHTS = {240, 360, 720, 1080}
-    FREE_AUDIO_EXTS = {"mp3", "m4a"}
-
-    for f in info.get('formats', []):
-        # We must have a format_id, url, and extension to continue
-        if not all(f.get(k) for k in ['format_id', 'url', 'ext']):
-            continue
-
-        format_id = f.get('format_id')
-        ext = f.get('ext')
-        filesize = f.get('filesize') or f.get('filesize_approx')
-        size_mb = round(filesize / (1024 * 1024), 2) if filesize else None
-        
-        quality_label = None
-        is_premium = False
-
-        # --- Check Audio Formats ---
-        # 'vcodec' == 'none' is a reliable way to check for audio-only
-        if f.get('vcodec') == 'none' and ext in FREE_AUDIO_EXTS:
-            quality_label = f"Audio ({ext.upper()})"
-        
-        # --- Check Video Formats ---
-        elif f.get('height'):
-            height = f.get('height')
-            
-            if height in FREE_VIDEO_HEIGHTS:
-                # It's a free video format
-                is_premium = False
-                quality_label = f"{height}p"
-                if height == 1080:
-                    quality_label = "1080p (HD)"
-            
-            elif height > 1080:
-                # It's a premium video format
-                is_premium = True
-                quality_label = f"Premium HD ({height}p)"
-                if height == 2160:
-                     quality_label = f"Premium 4K ({height}p)"
-            
-            # (We ignore formats below 240p)
-
-        # --- Add to our list ---
-        if quality_label and quality_label not in seen_qualities:
-            seen_qualities.add(quality_label)
-            cleaned_formats.append(FormatInfo(
-                quality=quality_label,
-                ext=ext,
-                size_mb=size_mb,
-                is_premium=is_premium,
-                format_id=format_id # Pass the real ID
-            ))
-
-    # Sort the list to be logical: Audio first, then video from low to high
-    def sort_key(f: FormatInfo):
-        if "Audio" in f.quality:
-            return 0
-        if "Premium" in f.quality:
-            return 2000 # Put premium at the end
-        # Extract the number (e.g., 720) from "720p"
-        p_val = int(re.sub(r'[^0-9]', '', f.quality))
-        return p_val
-
-    cleaned_formats.sort(key=sort_key)
-    return cleaned_formats
+# Utility to sanitize filenames
+def sanitize_filename(filename: str) -> str:
+    # Remove characters that are illegal in most file systems
+    filename = re.sub(r'[\\/:*?"<>|]', '', filename)
+    # Replace spaces with underscores
+    filename = filename.replace(' ', '_')
+    # Limit length
+    return filename[:100]
 
 
-# --- API Endpoints ---
+# --- API Routes ---
 
-@app.get("/", tags=["General"])
-def read_root():
-    return {"status": "Vydra API is running!"}
-
-
-@app.post("/api/analyze", response_model=AnalyzeResponse, tags=["Core"])
-def analyze_url(request: AnalyzeRequest):
-    """
-    REFACTOR: This endpoint now uses our intelligent filtering logic.
-    """
-    logger.info(f"Received analysis request for URL: {request.url}")
-    
-    # We use 'bestvideo+bestaudio/best' to ensure we get all formats
+@app.post("/api/analyze", response_model=AnalyzeResponse)
+async def analyze_link(request: AnalyzeRequest):
     ydl_opts = {
-        'format': 'bestvideo+bestaudio/best',
-        'quiet': True, 
-        'no_warnings': True, 
-        'skip_download': True
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'dump_single_json': True,
+        'extract_flat': True, # Get information without downloading
+        'cachedir': False, # No cache
+        'noplaylist': True, # Do not process playlists
+        'quiet': True,
+        'simulate': True, # Do not download
+        'force_ipv4': True,
     }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(str(request.url), download=False)
-            
-            title = info.get('title', 'Untitled')
-            thumbnail = info.get('thumbnail')
+        with YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(request.url, download=False)
 
-            # --- REFACTOR: Call our new function ---
-            cleaned_formats = get_clean_formats(info)
-            
-            if not cleaned_formats:
-                logger.warning(f"No downloadable formats found for {request.url}")
-                raise HTTPException(status_code=404, detail="No downloadable media found at this URL.")
+        # Extract title and thumbnail
+        title = info_dict.get('title', 'Unknown Title')
+        thumbnail = info_dict.get('thumbnail')
+        original_url = info_dict.get('webpage_url', request.url) # Use webpage_url if available
 
-            logger.info(f"Successfully processed {request.url}. Found {len(cleaned_formats)} formats.")
-            
-            return AnalyzeResponse(
-                title=title,
-                thumbnail=thumbnail,
-                formats=cleaned_formats,
-                original_url=request.url
+        formats_list = []
+        if 'formats' in info_dict:
+            # Sort by filesize (desc) then quality (desc)
+            # Prioritize video-only and audio-only for clarity if they exist
+            sorted_formats = sorted(
+                info_dict['formats'],
+                key=lambda f: (f.get('filesize', 0) or f.get('filesize_approx', 0), f.get('height', 0), f.get('tbr', 0)),
+                reverse=True
             )
 
+            seen_qualities = set()
+            for f in sorted_formats:
+                format_id = f.get('format_id')
+                ext = f.get('ext')
+                # Skip formats without ext or format_id, or non-mp4/m4a for now
+                if not ext or not format_id or (ext not in ['mp4', 'm4a', 'webm', 'ogg', 'mov', 'flv', 'avi']):
+                    continue
+
+                quality_label = None
+                is_premium = False
+
+                # Handle combined video+audio formats
+                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                    if f.get('height'):
+                        quality_label = f"{f['height']}p"
+                        if f['height'] >= 1080: # Example: consider 1080p+ as premium
+                            is_premium = True
+                    elif f.get('tbr'): # Total Bit Rate for audio/other if height not available
+                        quality_label = f"{int(f['tbr'])}kbps"
+                # Handle audio-only formats
+                elif f.get('vcodec') == 'none' and f.get('acodec') != 'none':
+                    if f.get('abr'): # Average Bit Rate for audio
+                        quality_label = f"Audio {int(f['abr'])}kbps"
+                    else:
+                        quality_label = "Audio"
+                    is_premium = True # All audio-only considered premium for this example
+                # Handle video-only formats (might not be directly downloadable, but good for info)
+                elif f.get('acodec') == 'none' and f.get('vcodec') != 'none':
+                     if f.get('height'):
+                        quality_label = f"Video {f['height']}p (no audio)"
+                        is_premium = True # Video-only without audio might also be premium
+
+                if not quality_label or quality_label in seen_qualities:
+                    continue # Skip if no quality label or already seen
+
+                filesize = f.get('filesize') or f.get('filesize_approx')
+                size_mb = round(filesize / (1024 * 1024), 2) if filesize else None
+
+                formats_list.append(FormatInfo(
+                    format_id=format_id,
+                    ext=ext,
+                    quality=quality_label,
+                    size_mb=size_mb,
+                    is_premium=is_premium
+                ))
+                seen_qualities.add(quality_label)
+        
+        # Fallback for simple single files (e.g., direct image/audio links) if no formats list
+        elif 'url' in info_dict and 'ext' in info_dict and not formats_list:
+            default_ext = info_dict['ext']
+            default_quality = "Original"
+            default_filesize = info_dict.get('filesize') or info_dict.get('filesize_approx')
+            default_size_mb = round(default_filesize / (1024 * 1024), 2) if default_filesize else None
+
+            formats_list.append(FormatInfo(
+                format_id="best", # Or a more appropriate default
+                ext=default_ext,
+                quality=default_quality,
+                size_mb=default_size_mb,
+                is_premium=False
+            ))
+
+
+        return AnalyzeResponse(
+            title=title,
+            thumbnail=thumbnail,
+            original_url=original_url,
+            formats=formats_list
+        )
     except Exception as e:
-        logger.error(f"Generic server error for {request.url}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"Error analyzing link: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not analyze link: {e}")
 
-
-@app.get("/api/download", tags=["Core"])
-async def download_proxy(
-    url: HttpUrl, 
-    # REFACTOR: We now use 'format_id' for a precise match
-    format_id: str, 
-    title: str, 
+@app.get("/api/download")
+async def download_media(
+    url: str,
+    format_id: str,
+    title: str,
     ext: str,
-    quality: str, # Get the quality label for the filename
-    request: Request
+    quality: str,
+    response: Response # FastAPI's Response object
 ):
-    """
-    REFACTOR: This proxy now downloads a *specific* format_id.
-    """
-    logger.info(f"Received download request for: {title} ({format_id})")
-
-    # We tell yt-dlp to *only* find the format we want
-    ydl_opts = {
-        'format': format_id,
-        'quiet': True, 
-        'no_warnings': True, 
-        'skip_download': True
-    }
-    
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(str(url), download=False)
-            
-            # 'info' will be the *specific format* we requested
-            # If 'formats' exists, it's a merged format
-            if 'formats' in info:
-                download_url = info['url'] # Merged format URL
-            else:
-                download_url = info.get('url') # Single format URL
-            
-            if not download_url:
-                logger.error(f"Could not find URL for format_id {format_id}")
-                raise HTTPException(status_code=404, detail="Format not found.")
+        # Define output template, using original filename logic
+        sanitized_title = sanitize_filename(title)
+        output_template = os.path.join('/tmp', f'{sanitized_title}.%(ext)s') # Download to /tmp
 
-            logger.info(f"Found matching URL for {format_id}")
-            
-            client = httpx.AsyncClient(timeout=30.0)
-            stream_request = client.build_request("GET", download_url)
-            stream_response = await client.send(stream_request, stream=True)
-            
-            safe_title = sanitize_filename(title)
-            # Use the 'quality' label for a clean filename
-            filename = f"{safe_title} ({quality}).{ext}"
-            
-            headers = {
-                "Content-Disposition": f"attachment; filename=\"{filename}\"",
-                "Content-Type": "application/octet-stream",
-            }
+        ydl_opts = {
+            'format': format_id,
+            'outtmpl': output_template,
+            'cachedir': False,
+            'noplaylist': True,
+            'quiet': True,
+            'force_ipv4': True,
+            'merge_output_format': ext, # Ensure output is merged to the requested extension
+        }
 
-            async def event_generator():
-                async for chunk in stream_response.aiter_bytes():
-                    if await request.is_disconnected():
-                        logger.warning("Client disconnected, closing stream.")
-                        await client.aclose()
-                        break
-                    yield chunk
-                await client.aclose()
-                logger.info("Stream finished.")
+        # Ensure download directory exists
+        os.makedirs('/tmp', exist_ok=True)
 
-            return StreamingResponse(event_generator(), headers=headers)
+        # Download the file
+        with YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            # Find the actual downloaded file path
+            downloaded_file = ydl.prepare_filename(info_dict)
+            downloaded_file = re.sub(r'\.part$', '', downloaded_file) # Remove .part if present
 
+        # Check if the file was actually downloaded
+        if not os.path.exists(downloaded_file):
+            raise FileNotFoundError(f"Downloaded file not found at {downloaded_file}")
+
+        # Stream the file back to the client
+        # Important: Use Response(content=...) for streaming a file
+        with open(downloaded_file, 'rb') as f:
+            content = f.read()
+
+        response.headers["Content-Disposition"] = f"attachment; filename=\"{sanitized_title}.{ext}\""
+        response.headers["Content-Type"] = f"application/{ext}" # More specific content type if possible
+        response.headers["X-File-Name"] = f"{sanitized_title}.{ext}" # Custom header
+
+        # Clean up the downloaded file
+        os.remove(downloaded_file)
+        
+        return Response(content=content, media_type=f"application/{ext}")
+
+    except FileNotFoundError as fnf_e:
+        print(f"File not found error: {fnf_e}")
+        raise HTTPException(status_code=500, detail=f"Server error: Downloaded file not found. {fnf_e}")
     except Exception as e:
-        logger.error(f"Download proxy error: {e}")
-        return "An error occurred while trying to download your file."
-
-
-# --- Run the Server ---
-if __name__ == "__main__":
-    print("Starting Vydra API server (v3.0 - Format Filtering) on http://localhost:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+        print(f"Error during download: {e}")
+        # Make sure to import HTTPException if not already
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Download failed: {e}")

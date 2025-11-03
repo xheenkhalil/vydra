@@ -317,7 +317,7 @@ export default function Home() {
               <div className="flex flex-col items-center gap-2 md:gap-3 group"><div className="bg-white rounded-2xl w-14 h-14 md:w-20 md:h-20 flex items-center justify-center shadow-xl group-hover:scale-110 transition-transform"><i className="fab fa-dailymotion text-blue-700 text-2xl md:text-3xl"></i></div><span className="text-white text-xs md:text-sm font-bold">Dailymotion</span></div>
             </div>
           </div>
-          <div className="mt-8 md:mt-12 text-center"><p className="text-white/60 text-xs md:text-sm mb-4">© 2024 Vydra. All rights reserved.</p><div className="flex items-center justify-center gap-4 md:gap-6"><a href="#" className="text-white/70 hover:text-white transition-colors text-xs md:text-sm">Privacy Policy</a><a href="#" className="text-white/70 hover:text-white transition-colors text-xs md:text-sm">Terms of Service</a><a href="#" className="text-white/70 hover:text-white transition-colors text-xs md:text-sm">Contact</a></div></div>
+          <div className="mt-8 md:mt-12 text-center"><p className="text-white/60 text-xs md:text-sm mb-4">© 2025 Vydra. All rights reserved.</p><div className="flex items-center justify-center gap-4 md:gap-6"><a href="#" className="text-white/70 hover:text-white transition-colors text-xs md:text-sm">Privacy Policy</a><a href="#" className="text-white/70 hover:text-white transition-colors text-xs md:text-sm">Terms of Service</a><a href="#" className="text-white/70 hover:text-white transition-colors text-xs md:text-sm">Contact</a></div></div>
         </div>
       </main>
 
