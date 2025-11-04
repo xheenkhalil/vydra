@@ -1,36 +1,40 @@
-from fastapi import FastAPI, Response, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from yt_dlp import YoutubeDL
 import os
 import re
 import traceback
-# Import StreamingResponse
-from fastapi.responses import StreamingResponse 
-import glob # Ensure glob is imported globally if used outside a function
+import glob
 
-
+# --- FastAPI App Initialization ---
 app = FastAPI()
 
-# --- CORS Configuration (unchanged) ---
+# --- CORS Configuration ---
+# Get frontend URL from environment variable for CORS.
+# Defaults to localhost and a common Vercel URL if not set.
 frontend_url_env = os.getenv("FRONTEND_URL")
 origins = [
     "http://localhost",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://vydra.onrender.com",
+    "https://vydra-downloader.vercel.app"
+    "https://vydra.onrender.com",  # Your deployed frontend, if it's on Render
 ]
+
 if frontend_url_env:
+    # Ensure no trailing slash for consistent matching
     if frontend_url_env.endswith('/'):
         frontend_url_env = frontend_url_env.rstrip('/')
     origins.append(frontend_url_env)
     print(f"Allowed frontend URL from env: {frontend_url_env}")
 else:
-    default_vercel_url = "https://vydra-downloader.vercel.app"
+    default_vercel_url = "https://vydra-downloader.vercel.app" # Default Vercel frontend URL
     origins.append(default_vercel_url)
     print(f"FRONTEND_URL env var not set, using default: {default_vercel_url}")
+
 print(f"Configuring CORS with allowed origins: {origins}")
 
 app.add_middleware(
@@ -41,7 +45,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Pydantic models (unchanged) ---
+# --- Pydantic Models for API Request/Response Validation ---
+
 class AnalyzeRequest(BaseModel):
     url: str
 
@@ -59,43 +64,66 @@ class AnalyzeResponse(BaseModel):
     formats: List[FormatInfo]
     description: Optional[str] = None
 
-# --- Utility to sanitize filenames (unchanged) ---
+# --- Utility Functions ---
+
 def sanitize_filename(filename: str) -> str:
+    """Sanitizes a string to be safe for use as a filename."""
+    # Remove invalid characters for filenames
     filename = re.sub(r'[\\/:*?"<>|]', '', filename)
+    # Replace spaces with underscores
     filename = filename.replace(' ', '_')
+    # Truncate to a reasonable length to avoid OS limits
     return filename[:100]
 
-# --- Global function to get YDL options (unchanged) ---
-def get_ydl_opts(is_download: bool = False, format_id: str = None, ext: str = None, output_template: str = None):
+def get_ydl_opts(is_download: bool = False, format_id: Optional[str] = None, 
+                 ext: Optional[str] = None, output_template: Optional[str] = None) -> dict:
+    """
+    Constructs and returns options dictionary for YoutubeDL.
+    Includes proxy support from environment variables.
+    """
     ydl_opts = {
-        'cachedir': False,
-        'noplaylist': True,
-        'quiet': True,
-        'force_ipv4': True,
-        'simulate': not is_download,
-        'dump_single_json': not is_download,
-        'extract_flat': not is_download,
-        'geo_bypass': True,
-        'retries': 5,
-        'continuedl': True,
-        'fragment_retries': 5,
-        'socket_timeout': 10,
+        'cachedir': False,          # Do not use cache directory
+        'noplaylist': True,         # Do not download playlists
+        'quiet': True,              # Suppress standard output
+        'force_ipv4': True,         # Force IPv4
+        'simulate': not is_download, # Simulate (don't download) if not in download mode
+        'dump_single_json': not is_download, # Dump info as JSON if simulating
+        'extract_flat': not is_download,     # Extract flat info if simulating
+        'geo_bypass': True,         # Bypass geographic restrictions
+        'retries': 5,               # Number of retries for downloads
+        'continuedl': True,         # Continue interrupted downloads
+        'fragment_retries': 5,      # Number of retries for fragments
+        'socket_timeout': 10,       # Socket timeout in seconds
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.88 Safari/537.36',
     }
-    print("No proxy configured.")
+
+    # --- Proxy Configuration ---
+    proxy_url = os.getenv("PROXY_URL")
+    if proxy_url:
+        ydl_opts['proxy'] = proxy_url
+        print(f"Using proxy: {proxy_url}")
+    else:
+        print("No proxy configured.")
+
+    # Specific options for analysis vs. download
     if not is_download:
+        # Prioritize MP4 and M4A, then best available MP4/general best
         ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-    if is_download:
+    else: # is_download == True
+        # Use the specific format_id, output template, and merge format for download
         ydl_opts['format'] = format_id
         ydl_opts['outtmpl'] = output_template
-        ydl_opts['merge_output_format'] = ext
+        ydl_opts['merge_output_format'] = ext # For merging video+audio if needed
+
     return ydl_opts
 
-
-# --- API Routes (analyze_link is unchanged) ---
+# --- API Endpoints ---
 
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 async def analyze_link(request: AnalyzeRequest):
+    """
+    Analyzes a given URL to extract video metadata and available formats.
+    """
     try:
         ydl_opts = get_ydl_opts(is_download=False)
         
@@ -111,6 +139,7 @@ async def analyze_link(request: AnalyzeRequest):
 
         formats_list = []
         if 'formats' in info_dict:
+            # Sort formats by height then bitrate, descending
             sorted_formats = sorted(
                 info_dict['formats'],
                 key=lambda f: (
@@ -126,30 +155,33 @@ async def analyze_link(request: AnalyzeRequest):
             for f in sorted_formats:
                 format_id = f.get('format_id')
                 ext = f.get('ext')
+                # Filter out invalid or unsupported formats
                 if not ext or not format_id or (ext not in ['mp4', 'm4a', 'webm', 'ogg', 'mov', 'flv', 'avi']):
                     continue
 
                 quality_label = None
                 is_premium = False
 
-                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                # Determine quality label and premium status
+                if f.get('vcodec') != 'none' and f.get('acodec') != 'none': # Video with audio
                     if f.get('height'):
                         quality_label = f"{f['height']}p"
-                        if f['height'] >= 1080:
+                        if f['height'] >= 1080: # Mark 1080p and higher as premium
                             is_premium = True
                     elif f.get('tbr'):
                         quality_label = f"{int(f['tbr'])}kbps"
-                elif f.get('vcodec') == 'none' and f.get('acodec') != 'none':
+                elif f.get('vcodec') == 'none' and f.get('acodec') != 'none': # Audio only
                     if f.get('abr'):
                         quality_label = f"Audio {int(f['abr'])}kbps"
                     else:
                         quality_label = "Audio"
-                    is_premium = True
-                elif f.get('acodec') == 'none' and f.get('vcodec') != 'none':
+                    is_premium = True # Audio-only is premium
+                elif f.get('acodec') == 'none' and f.get('vcodec') != 'none': # Video only (no audio)
                      if f.get('height'):
                         quality_label = f"Video {f['height']}p (no audio)"
-                        is_premium = True
+                        is_premium = True # Video-only is premium
 
+                # Skip if quality label couldn't be determined or already added
                 if not quality_label or quality_label in seen_qualities:
                     continue
 
@@ -165,6 +197,7 @@ async def analyze_link(request: AnalyzeRequest):
                 ))
                 seen_qualities.add(quality_label)
         
+        # Fallback for single-format entries (e.g., direct file links)
         elif 'url' in info_dict and 'ext' in info_dict and not formats_list:
             default_ext = info_dict['ext']
             default_quality = "Original"
@@ -172,7 +205,7 @@ async def analyze_link(request: AnalyzeRequest):
             default_size_mb = round(default_filesize / (1024 * 1024), 2) if default_filesize else None
 
             formats_list.append(FormatInfo(
-                format_id="best",
+                format_id="best", # Use "best" as a generic format_id for direct links
                 ext=default_ext,
                 quality=default_quality,
                 size_mb=default_size_mb,
@@ -189,6 +222,7 @@ async def analyze_link(request: AnalyzeRequest):
     except Exception as e:
         print(f"Error analyzing link: {e}")
         traceback.print_exc() 
+        # Provide user-friendly error messages based on common yt-dlp issues
         if "Sign in to confirm you’re not a bot" in str(e) or "geo-restricted" in str(e):
              raise HTTPException(status_code=400, detail="Video requires login, is age-restricted, or geo-restricted. Try a different video or ensure proxy is working.")
         elif "not a valid URL" in str(e):
@@ -202,26 +236,34 @@ async def download_media(
     format_id: str,
     title: str,
     ext: str,
-    quality: str,
-    # No longer need 'response: Response' as we are returning StreamingResponse directly
+    quality: str, # Not strictly used for download, but good for context/logging
 ):
+    """
+    Downloads a video from the given URL in the specified format and streams it back.
+    """
     try:
         sanitized_title = sanitize_filename(title)
+        # Create a unique filename for the temporary download
         base_filename_unique = f"{sanitized_title}_{os.urandom(4).hex()}"
+        # Output template for yt-dlp to save files in /tmp
         output_template = os.path.join('/tmp', f'{base_filename_unique}.%(ext)s')
 
         ydl_opts = get_ydl_opts(is_download=True, format_id=format_id, ext=ext, output_template=output_template)
 
+        # Ensure the /tmp directory exists
         os.makedirs('/tmp', exist_ok=True)
 
         with YoutubeDL(ydl_opts) as ydl:
             print(f"Attempting to download {title} ({format_id}) from {url}")
+            # Download the video
             info_dict = ydl.extract_info(url, download=True)
             
+            # yt-dlp's downloaded file path, or find it via glob if not directly provided
             downloaded_file = info_dict.get('filepath') or info_dict.get('_filename')
             
             if not downloaded_file or not os.path.exists(downloaded_file):
                 print(f"Warning: Direct filepath not found or incorrect for {title}. Attempting to locate via glob.")
+                # Use glob to find the file based on the unique prefix
                 potential_files = glob.glob(os.path.join('/tmp', f'{base_filename_unique}.*'))
                 if potential_files:
                     downloaded_file = potential_files[0]
@@ -229,32 +271,36 @@ async def download_media(
                 else:
                     raise FileNotFoundError(f"Downloaded file not found for title '{sanitized_title}' in /tmp after download.")
 
+        # Final check if the file exists after all attempts
         if not os.path.exists(downloaded_file):
             raise FileNotFoundError(f"Downloaded file not found at {downloaded_file}")
 
-        def file_iterator(file_path):
+        def file_iterator(file_path: str):
+            """
+            Generator that reads a file in chunks and yields them.
+            Also cleans up the file after streaming is complete.
+            """
             with open(file_path, 'rb') as f:
-                while chunk := f.read(8192):
+                while chunk := f.read(8192): # Read in 8KB chunks
                     yield chunk
-            # Clean up the file after it has been completely streamed
-            # It's crucial this happens *after* the file is fully read
+            # --- File cleanup: IMPORTANT to do AFTER streaming ---
             try:
                 os.remove(file_path)
                 print(f"Successfully removed downloaded file: {file_path}")
             except OSError as cleanup_error:
                 print(f"Error removing downloaded file {file_path}: {cleanup_error}")
 
-
+        # Determine the final file extension for the response header
         final_ext = os.path.splitext(downloaded_file)[1].lstrip('.')
         response_ext = ext if ext else final_ext 
 
-        # Set headers for the response
+        # Set HTTP headers for file download
         headers = {
             "Content-Disposition": f"attachment; filename=\"{sanitized_title}.{response_ext}\"",
-            "X-File-Name": f"{sanitized_title}.{response_ext}"
+            "X-File-Name": f"{sanitized_title}.{response_ext}" # Custom header for debugging/info
         }
 
-        # Return StreamingResponse instead of plain Response
+        # Return the file as a streaming response
         return StreamingResponse(file_iterator(downloaded_file), media_type=f"application/{response_ext}", headers=headers)
 
     except FileNotFoundError as fnf_e:
