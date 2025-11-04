@@ -1,7 +1,9 @@
+// vydra_frontend/app/page.tsx
+
 "use client"; 
 
 import React, { useState, useEffect } from 'react'; 
-import Image from 'next/image'; // IMPORTANT: Using Next.js Image component
+import Image from 'next/image'; // IMPORTANT: You need Image import if you use <Image> component
 import { AnalyzeResponse, FormatInfo } from './types'; 
 import { sanitizeFilename } from './utils';
 import AdDisplay from './components/AdDisplay'; 
@@ -175,24 +177,6 @@ export default function Home() {
     }
   };
 
-  // NEW: handlePaste function
-  const handlePaste = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      setUrl(text);
-    } catch (err) {
-      console.error('Failed to read clipboard contents: ', err);
-      setError('Could not paste from clipboard. Please paste manually or grant clipboard permission.');
-    }
-  };
-
-  // NEW: handleClear function
-  const handleClear = () => {
-    setUrl('');
-    setResults(null); // Clear previous results when clearing the URL
-    setError(null);
-  };
-
   // --- Rendered UI (JSX) ---
   return (
     <> 
@@ -201,6 +185,7 @@ export default function Home() {
           
           <div className="text-center mb-8 md:mb-12">
             <div className="flex items-center justify-center mb-4 md:mb-6 float-animation">
+              {/* Corrected: Using Next.js Image component for the logo */}
               <Image
                 src="/vydra-logo.png"
                 alt="Vydra Logo"
@@ -214,142 +199,98 @@ export default function Home() {
             <p className="text-xl md:text-3xl font-bold bg-gradient-to-r from-purple-300 via-pink-300 to-blue-300 bg-clip-text text-transparent mb-2 md:mb-3">Download everything, anywhere.</p>
             <p className="text-sm md:text-base text-white/70 max-w-2xl mx-auto px-4">Your ultimate video downloader for all platforms. Fast, secure, and completely free.</p>
           </div>
-
-          {/* Input and Action Buttons Section */}
           <div className="bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-6 md:p-10 border border-white/20 mb-8 md:mb-12">
-            <label className="block text-white font-bold mb-3 md:mb-4 text-sm md:text-base flex items-center gap-2">
-              <i className="fas fa-link text-purple-300"></i>Paste Video URL
-            </label>
             <form onSubmit={handleFetch}>
-              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center"> {/* Use items-stretch to make buttons same height */}
+              <label className="block text-white font-bold mb-3 md:mb-4 text-sm md:text-base flex items-center gap-2"><i className="fas fa-link text-purple-300"></i>Paste Video URL</label>
+              <div className="flex flex-col sm:flex-row gap-3">
                 <input
                   type="text"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://www.youtube.com/watch?v=..."
-                  className="flex-grow px-4 md:px-6 py-3 md:py-4 bg-white/90 backdrop-blur-sm border-2 border-transparent rounded-xl focus:outline-none focus:border-purple-400 focus:bg-white transition-all text-gray-800 placeholder-gray-400 text-sm md:text-base shadow-lg min-w-0" // min-w-0 for shrinking
+                  className="flex-1 px-4 md:px-6 py-3 md:py-4 bg-white/90 backdrop-blur-sm border-2 border-transparent rounded-xl focus:outline-none focus:border-purple-400 focus:bg-white transition-all text-gray-800 placeholder-gray-400 text-sm md:text-base shadow-lg"
                   required
                 />
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-shrink-0 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 md:px-10 py-3 md:py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-xl hover:shadow-2xl hover:scale-105 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 md:px-10 py-3 md:py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-xl hover:shadow-2xl hover:scale-105 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <i className={`fas ${loading ? 'fa-spinner animate-spin' : 'fa-search'}`}></i>
                   <span>{loading ? 'Fetching...' : 'Fetch'}</span>
                 </button>
               </div>
             </form>
-            
-            <div className="flex flex-wrap gap-3 mt-4 justify-start"> {/* Buttons below the input */}
-              <button
-                onClick={handlePaste}
-                className="flex-grow sm:flex-grow-0 bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600 text-white px-6 md:px-8 py-3 md:py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <i className="fas fa-paste"></i>
-                <span>Paste from Clipboard</span>
-              </button>
-              <button
-                onClick={handleClear}
-                className="flex-grow sm:flex-grow-0 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white px-6 md:px-8 py-3 md:py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <i className="fas fa-times-circle"></i>
-                <span>Clear Link</span>
-              </button>
-            </div>
-
-
             <div className="mt-8">
               {loading && <Spinner />}
               {error && <ErrorMessage message={error} />}
               {results && (
                 <div className="border-t border-white/20 pt-8">
-                  {/* NEW: Horizontal Thumbnail and Metadata Layout */}
-                  <div className="flex flex-col md:flex-row gap-6 mb-8">
+                  <div className="flex flex-col md:flex-row gap-6">
                     {results.thumbnail && (
-                      <div className="flex-shrink-0 w-full md:w-1/3 max-w-xs overflow-hidden rounded-2xl shadow-lg border border-white/20">
-                        <Image
-                          src={results.thumbnail} 
-                          alt={results.title || "Media Thumbnail"}
-                          width={300} // Adjust based on your desired thumbnail size
-                          height={169} // Aspect ratio for 16:9 videos
-                          layout="responsive" // Make image responsive
-                          objectFit="cover"
-                          className="rounded-2xl"
-                        />
-                      </div>
+                      <img 
+                        src={results.thumbnail} 
+                        alt="Media Thumbnail"
+                        className="w-full md:w-1/3 rounded-2xl shadow-lg border border-white/20 object-cover"
+                      />
                     )}
-                    <div className="flex-1 text-white">
-                      <h2 className="text-2xl md:text-3xl font-bold text-purple-400 mb-2">
+                    <div className="flex-1">
+                      <h2 className="text-2xl md:text-3xl font-bold text-white mb-5">
                         {results.title}
                       </h2>
-                      {results.original_url && (
-                        <p className="text-sm text-gray-400 mb-2">
-                          <a href={results.original_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-                            Original Link
-                          </a>
-                        </p>
-                      )}
-                      {results && 'description' in results && typeof (results as Record<string, unknown>)['description'] === 'string' && (
-                         <p className="text-gray-300 text-sm max-h-24 overflow-y-auto pr-2 mt-2">
-                            {(((results as unknown) as { description: string }).description.length > 200)
-                              ? ((results as unknown) as { description: string }).description.substring(0, 200) + '...'
-                              : ((results as unknown) as { description: string }).description}
-                         </p>
-                      )}
+                      
+                      <label className="block text-white font-bold mb-3 text-sm md:text-base flex items-center gap-2">
+                        <i className="fas fa-download text-purple-300"></i>Select a format to download
+                      </label>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        
+                        {results.formats.map((format, index) => (
+                          <button
+                            key={index}
+                            onClick={() => handleFormatClick(format)}
+                            className={`
+                              bg-white/10 backdrop-blur-sm border-2 border-white/30 rounded-xl p-4 
+                              transition-all flex items-center justify-between gap-3 group
+                              ${format.is_premium 
+                                ? 'hover:border-yellow-400 hover:bg-white/20' 
+                                : 'hover:border-purple-400 hover:bg-white/20'}
+                            `}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`
+                                p-2 rounded-lg transition-transform
+                                ${format.is_premium 
+                                  ? 'bg-yellow-500/80 group-hover:scale-110' 
+                                  : 'bg-gradient-to-br from-purple-500 to-pink-500 group-hover:scale-110'}
+                              `}>
+                                <i className={`fas ${
+                                  format.is_premium 
+                                    ? 'fa-gem' 
+                                    : (format.ext.includes('mp3') || format.ext.includes('m4a') ? 'fa-music' : 'fa-video')
+                                  } text-white text-lg`}></i>
+                              </div>
+                              <div className="text-left">
+                                <div className="font-bold text-white text-sm md:text-base">{format.quality}</div>
+                                <div className="text-xs text-white/60">{format.ext.toUpperCase()}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {format.is_premium && (
+                                <span className="text-sm bg-yellow-500/30 text-yellow-300 font-bold px-3 py-1 rounded-full">
+                                  PRO
+                                </span>
+                              )}
+                              {format.size_mb && (
+                                <span className="text-sm bg-gray-900/50 text-white/80 px-3 py-1 rounded-full hidden sm:block">
+                                  {format.size_mb} MB
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-
-                  {/* Existing Format Selection */}
-                  <label className="block text-white font-bold mb-3 text-sm md:text-base flex items-center gap-2 mt-6">
-                    <i className="fas fa-download text-purple-300"></i>Select a format to download
-                  </label>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {results.formats.map((format, index) => (
-                      <button
-                        key={index}
-                        onClick={() => handleFormatClick(format)}
-                        className={`
-                          bg-white/10 backdrop-blur-sm border-2 border-white/30 rounded-xl p-4 
-                          transition-all flex items-center justify-between gap-3 group
-                          ${format.is_premium 
-                            ? 'hover:border-yellow-400 hover:bg-white/20' 
-                            : 'hover:border-purple-400 hover:bg-white/20'}
-                        `}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`
-                            p-2 rounded-lg transition-transform
-                            ${format.is_premium 
-                              ? 'bg-yellow-500/80 group-hover:scale-110' 
-                              : 'bg-gradient-to-br from-purple-500 to-pink-500 group-hover:scale-110'}
-                          `}>
-                            <i className={`fas ${
-                              format.is_premium 
-                                ? 'fa-gem' 
-                                : (format.ext.includes('mp3') || format.ext.includes('m4a') ? 'fa-music' : 'fa-video')
-                              } text-white text-lg`}></i>
-                          </div>
-                          <div className="text-left">
-                            <div className="font-bold text-white text-sm md:text-base">{format.quality}</div>
-                            <div className="text-xs text-white/60">{format.ext.toUpperCase()}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {format.is_premium && (
-                            <span className="text-sm bg-yellow-500/30 text-yellow-300 font-bold px-3 py-1 rounded-full">
-                              PRO
-                            </span>
-                          )}
-                          {format.size_mb && (
-                            <span className="text-sm bg-gray-900/50 text-white/80 px-3 py-1 rounded-full hidden sm:block">
-                              {format.size_mb} MB
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
                   </div>
                 </div>
               )}

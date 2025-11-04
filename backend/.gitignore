@@ -6,7 +6,7 @@ venv/
 .venv/
 env/
 .env/
-
+main-copy.py
 # Compiled Python files
 __pycache__/
 *.pyc
